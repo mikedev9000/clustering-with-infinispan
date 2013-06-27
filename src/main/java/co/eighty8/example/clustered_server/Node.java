@@ -57,32 +57,32 @@ public class Node {
 	public class NodeStatusCacheListener {
 
 		@CacheStarted
-		public void handleStart(Event<String, String> event) {
+		public void handleStart(Event<Integer, String> event) {
 			System.out.println("Cache Started... ");
 		}
 
 		@CacheStopped
-		public void handleStop(Event<String, String> event) {
+		public void handleStop(Event<Integer, String> event) {
 			System.out.println("Cache shudown.... ");
 		}
 
 		@CacheEntryCreated
 		public void cacheEntryCreated(
-				CacheEntryCreatedEvent<String, String> event) {
+				CacheEntryCreatedEvent<Integer, String> event) {
 			System.out.println("Node added: " + event.getKey() + "=>"
 					+ event.getValue());
 		}
 
 		@CacheEntryModified
 		public void cacheEntryModified(
-				CacheEntryModifiedEvent<String, String> event) {
+				CacheEntryModifiedEvent<Integer, String> event) {
 			System.out.println("Node modified: " + event.getKey() + "=>"
 					+ event.getValue());
 		}
 
 		@CacheEntryRemoved
 		public void cacheEntryRemoved(
-				CacheEntryRemovedEvent<String, String> event) {
+				CacheEntryRemovedEvent<Integer, String> event) {
 			System.out.println("Node removed: " + event.getKey() + "=>"
 					+ event.getValue());
 		}
@@ -132,38 +132,62 @@ public class Node {
 
 	}
 
-	public static void main(String[] args) {
-		Node node = new Node();
-		try {
-			node.initialize();
-			node.run();
-		} catch (Throwable t) {
-			t.printStackTrace();
-			System.exit(1);
-		}
-	}
+	private int nodeId;
 
 	private DefaultCacheManager cacheManager;
 	private Cache<Object, Object> userInputCache;
 	private Cache<Object, Object> nodeStatusCache;
 
-	public Node() {
-		cacheManager = new DefaultCacheManager();
+	public Node(int nodeId) {
+		this.nodeId = nodeId;
 	}
 
 	public void initialize() throws Throwable {
+		cacheManager = new DefaultCacheManager("infinispan-replication.xml");
+
 		userInputCache = cacheManager.getCache("userInput");
 		userInputCache.addListener(new UserInputCacheListener());
 
 		nodeStatusCache = cacheManager.getCache("nodeStatus");
+		nodeStatusCache.addListener(new NodeStatusCacheListener());
+	}
+
+	protected void waitForClusterToForm() {
+		// Wait for the cluster to form, erroring if it doesn't form after the
+		// timeout
+		if (!ClusterValidation.waitForClusterToForm(cacheManager, nodeId, 2)) {
+			throw new IllegalStateException(
+					"Error forming cluster, check the log");
+		}
 	}
 
 	public void run() throws Throwable {
 		startInputThread();
+		startNodeStatusThread();
+		System.out.println("clusterMembers: "
+				+ cacheManager.getClusterMembers());
 	}
 
 	private void startInputThread() {
 		Thread thread = new Thread(new InputLoop(), "InputLoop");
+		thread.setDaemon(false);
+		thread.start();
+	}
+
+	private void startNodeStatusThread() {
+		Thread thread = new Thread(new Runnable() {
+
+			public void run() {
+				while (true) {
+					nodeStatusCache.put(nodeId,
+							String.valueOf(System.currentTimeMillis()));
+					try {
+						Thread.sleep(10000L);
+					} catch (InterruptedException e) {
+					}
+				}
+			}
+		}, "NodeStatusOutputLoop");
 		thread.setDaemon(false);
 		thread.start();
 	}
